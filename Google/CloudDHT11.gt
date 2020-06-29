@@ -1,0 +1,251 @@
+function doPost(d) {
+  const CONFIG_NAME = "config.json";
+  const BACKUP_NAME = "config.json.bak";
+
+  const RSSI_COL = 1;
+  const ADDED_COL = 2;
+  const TIMESTAMP_COL = 3;
+  const TEMP_COL = 4;
+  const HUM_COL = 5;
+
+  try {
+    let parsedData;
+
+    parsedData = JSON.parse(d.postData.contents);
+    if ((parsedData !== undefined) && (parsedData.uid !== undefined)) {
+      let folder = getFolder(parsedData.uid, true);
+
+      if (folder == null) {
+        console.error("No folder found for UID " + parsedData.uid);
+        return ContentService.createTextOutput("ERROR: Unregistered UID!");
+      }
+      if (parsedData.config !== undefined) {
+        let file, backup;
+        let config, content;
+
+        config = JSON.stringify(parsedData.config);
+        file = openFile(folder, CONFIG_NAME);
+        if (file != null) {
+          content = file.getBlob().getDataAsString();
+          if (config != content) {
+            backup = openFile(folder, BACKUP_NAME, true);
+            if (backup != null) {
+              backup.setContent(config);
+            } else {
+              console.error("Error creating config backup!");
+            }
+            return ContentService.createTextOutput(content);
+          }
+        } else {
+          backup = openFile(folder, BACKUP_NAME);
+          if (backup != null) {
+            content = backup.getBlob().getDataAsString();
+            if (config != content) {
+              backup.setContent(config);
+            }
+          } else {
+            backup = openFile(folder, BACKUP_NAME, true);
+            if (backup != null) {
+              backup.setContent(config);
+            } else {
+              console.error("Error creating config backup!");
+            }
+          }
+        }
+        return ContentService.createTextOutput("OK");
+      } else if ((parsedData.samples !== undefined) && Array.isArray(parsedData.samples)) {
+        let timestamp;
+        let date = 0;
+        let sheet;
+
+        for (let sample = 0; sample < parsedData.samples.length; ++sample) {
+          timestamp = new Date(parsedData.samples[sample].timestamp * 1000);
+          if (timestamp.getDate() != date) {
+            let ss;
+
+            date = timestamp.getDate();
+            ss = getSpreadsheet(folder, timestamp);
+            if (ss == null) {
+              console.error("Error opening or creating spreadsheet for UID " + parsedData.uid);
+              return ContentService.createTextOutput("ERROR: Spreadsheet problem!");
+            }
+            sheet = ss.getSheets()[0];
+          }
+          if (! findData(sheet, timestamp.getTime())) {
+            let row = sheet.getLastRow() + 1;
+
+            sheet.getRange(row, RSSI_COL).setNumberFormat("0").setValue(parsedData.rssi); // RSSI
+            sheet.getRange(row, ADDED_COL).setNumberFormat("dd.mm.yyyy hh:mm:ss").setValue(new Date()); // Added
+            sheet.getRange(row, TIMESTAMP_COL).setNumberFormat("dd.mm.yyyy hh:mm:ss").setValue(timestamp); // Timestamp
+            if (parsedData.samples[sample].temp != null)
+              sheet.getRange(row, TEMP_COL).setNumberFormat("0.00").setValue(parsedData.samples[sample].temp); // Temperature
+            if (parsedData.samples[sample].hum != null)
+              sheet.getRange(row, HUM_COL).setNumberFormat("0.00").setValue(parsedData.samples[sample].hum); // Humidity
+          } else {
+            parsedData.samples[sample].timestamp = null; // Duplicate values
+//            console.warn("Data already stored");
+          }
+        }
+        SpreadsheetApp.flush();
+//        saveData(folder, parsedData);
+//        console.log("Data stored successfully");
+        return ContentService.createTextOutput("OK");
+      }
+    }
+    console.error("Wrong POST content!");
+    return ContentService.createTextOutput("ERROR: Request body empty or incorrect!");
+  } catch(e) {
+    console.error("EXCEPTION in doPost(): " + e.message);
+    return ContentService.createTextOutput("ERROR: " + e.message);
+  }
+}
+
+function findData(sheet, timestamp) {
+  const TIMESTAMP_COL = 3;
+
+  for (let r = sheet.getLastRow(); r >= 2; --r) {
+    let time = sheet.getRange(r, TIMESTAMP_COL).getValue().getTime(); // Timestamp
+
+    if (time == timestamp)
+      return true;
+    else if (time < timestamp)
+      break;
+  }
+  return false;
+}
+
+function getFolder(uid, create = false) {
+  const FOLDER_NAME = "CloudDHT11";
+
+  try {
+    let folders, folder;
+
+    folders = DriveApp.getFoldersByName(FOLDER_NAME);
+    if (folders.hasNext()) {
+      folder = folders.next();
+    } else {
+      if (create)
+        folder = DriveApp.createFolder(FOLDER_NAME);
+      else
+        return null;
+    }
+    folders = folder.getFoldersByName(uid);
+    if (folders.hasNext()) {
+      folder = folders.next();
+    } else {
+      if (create)
+        folder = folder.createFolder(uid);
+      else
+        return null;
+    }
+    return folder;
+  } catch(e) {
+    console.error("EXCEPTION in getFolder(): " + e.message);
+    return null;
+  }
+}
+
+function openFile(folder, name, create = false) {
+  try {
+    let files;
+
+    files = folder.getFilesByName(name);
+    if (files.hasNext()) {
+      return files.next();
+    } else {
+      if (create) {
+        return folder.createFile(name, "");
+      }
+    }
+    return null;
+  } catch(e) {
+    console.error("EXCEPTION in openFile(): " + e.message);
+    return null;
+  }
+}
+
+function getSpreadsheet(folder, timestamp) {
+  const TEMPLATE_ID = "******";
+  const TIME_ZONE = "GMT+3";
+
+  try {
+    let name = Utilities.formatDate(timestamp, TIME_ZONE, "yyyyMM");
+    let files = folder.getFilesByName(name);
+
+    if (files.hasNext()) {
+      return SpreadsheetApp.open(files.next());
+    } else {
+      let template = SpreadsheetApp.openById(TEMPLATE_ID);
+      let result = template.copy(name);
+      let file = DriveApp.getFileById(result.getId());
+
+      folder.addFile(file);
+      DriveApp.getRootFolder().removeFile(file);
+//      console.log("New spreadsheet created from template");
+      return result;
+    }
+  } catch(e) {
+    console.error("EXCEPTION in getSpreadsheet(): " + e.message);
+    return null;
+  }
+}
+
+function saveData(folder, d) {
+  const CSV_EXT = ".csv";
+  const TIME_ZONE = "GMT+3";
+
+  try {
+    let timestamp;
+    let date = 0;
+    let csvname;
+    let files, csv;
+    let content = null;
+
+    for (let sample = 0; sample < d.samples.length; ++sample) {
+      if (d.samples[sample].timestamp != null) {
+        timestamp = new Date(d.samples[sample].timestamp * 1000);
+        if (timestamp.getDate() != date) {
+          date = timestamp.getDate();
+          if (content != null) {
+            if (csv != null) {
+              csv.setContent(content);
+            } else {
+              folder.createFile(csvname, content);
+            }
+            content = null;
+          }
+          csvname = Utilities.formatDate(timestamp, TIME_ZONE, "yyyyMMdd") + CSV_EXT;
+          files = folder.getFilesByName(csvname);
+          if (files.hasNext()) {
+            csv = files.next();
+            content = csv.getBlob().getDataAsString();
+          } else {
+            csv = null;
+            content = "Timestamp;Temperature;Humidity";
+            content += "\r\n";
+          }
+        }
+        content += Utilities.formatDate(timestamp, TIME_ZONE, "dd.MM.yyyy HH:mm:ss");
+        content += ";";
+        if (d.samples[sample].temp != null)
+          content += Utilities.formatString("%0.2f", d.samples[sample].temp);
+        content += ";";
+        if (d.samples[sample].hum != null)
+          content += Utilities.formatString("%0.2f", d.samples[sample].hum);
+        content += "\r\n";
+      }
+    }
+    if (content != null) {
+      if (csv != null) {
+        csv.setContent(content);
+      } else {
+        folder.createFile(csvname, content);
+      }
+    }
+//    console.log("Data saved successfully");
+    return true;
+  } catch(e) {
+    console.error("EXCEPTION in saveData(): " + e.message);
+    return false;
+  }
+}

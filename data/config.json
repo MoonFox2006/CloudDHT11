@@ -1,0 +1,14 @@
+{
+  "wifi_ssid":"******",
+  "wifi_pswd":"******",
+  "wifi_wep":false,
+  "ntp_server":"pool.ntp.org",
+  "ntp_tz":3,
+  "script_host":"script.google.com",
+  "script_port":443,
+  "script_uri":"******",
+  "temp_tolerance":2.0,
+  "hum_tolerance":5.0,
+  "measure_period":60,
+  "send_every":15
+}
