@@ -35,9 +35,9 @@ uint8_t BaseConfig::findParam_P(PGM_P name) const {
 }
 
 paramtype_t BaseConfig::paramType(uint8_t index) const {
-  if (index < _paramCount) {
+//  if (index < _paramCount) {
     return (paramtype_t)pgm_read_byte(&_params[index]._type);
-  }
+//  }
 }
 
 PGM_P BaseConfig::paramName(uint8_t index) const {
